@@ -3,3 +3,5 @@ uvicorn[standard]
 httpx
 pydantic
 python-dotenv
+requests_oauthlib
+oauthlib
