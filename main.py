@@ -87,7 +87,7 @@ EVALSCRIPTS["temporal_list"] = EVALSCRIPTS["cloudless_true_color"]
 
 # --- Pydantic Models ---
 class ProcessingRequest(BaseModel):
-    apiKey: str
+   
     lat: float
     lon: float
     startDate: str
@@ -112,6 +112,22 @@ async def fetch_single_image(client: httpx.AsyncClient, payload: dict, headers: 
 # --- Main API Endpoint ---
 @app.post("/api/sentinel-hub/process", tags=["Processing Pipeline"])
 async def process_image(request: ProcessingRequest):
+    from oauthlib.oauth2 import BackendApplicationClient
+    from requests_oauthlib import OAuth2Session
+
+    # Your client credentials
+    client_id = 'sh-fd8891d3-b21e-4495-8de2-844b29cb0dd8'
+    client_secret = 'EiW3swr7TTYLqgIskYQqLfEgllEcqaGD'
+
+    # Create a session
+    client = BackendApplicationClient(client_id=client_id)
+    oauth = OAuth2Session(client=client)
+
+    # Get token for the session
+    token = oauth.fetch_token(token_url='https://identity.dataspace.copernicus.eu/auth/realms/CDSE/protocol/openid-connect/token',
+                            client_secret=client_secret, include_client_id=True)
+
+    token = token.get("access_token")
     # --- Input Validation ---
     try:
         start_date = datetime.strptime(request.startDate, "%Y-%m-%d").date()
@@ -127,7 +143,7 @@ async def process_image(request: ProcessingRequest):
         raise HTTPException(status_code=400, detail=f"Invalid scriptType specified: {request.scriptType}")
 
     bbox = create_bbox(request.lat, request.lon)
-    headers = {"Authorization": f"Bearer {request.apiKey}", "Content-Type": "application/json"}
+    headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
 
     # --- Temporal List Workflow using a two-step Process API call ---
     if request.scriptType == "temporal_list":
@@ -221,6 +237,25 @@ async def process_image(request: ProcessingRequest):
         except httpx.HTTPStatusError as e:
             raise HTTPException(status_code=e.response.status_code, detail=f"Error from Copernicus API: {e.response.text}")
 
+PING_URLS = [
+    "https://sat-backend-55lg.onrender.com",
+    "https://sat-frontend.onrender.com/",
+]
+
+async def ping_services():
+    async with httpx.AsyncClient(timeout=10) as client:
+        while True:
+            for url in PING_URLS:
+                try:
+                    resp = await client.get(url)
+                    logger.info(f"Pinged {url} -> {resp.status_code}")
+                except Exception as e:
+                    logger.warning(f"Failed to ping {url}: {e}")
+            await asyncio.sleep(20)  # wait 20 seconds
+
+@app.on_event("startup")
+async def start_pinger():
+    asyncio.create_task(ping_services())
 # --- Main execution block ---
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8000)
